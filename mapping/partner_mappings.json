@@ -1,0 +1,14 @@
+{
+  "A": {
+    "description": "Partner A sends French-style CSV exports",
+    "columns": {"ref": "policy_id", "mail": "customer_email", "offer": "product", "start": "start_date", "price": "premium_eur"},
+    "date_format": "DD/MM/YYYY",
+    "decimal_separator": ","
+  },
+  "B": {
+    "description": "Partner B sends ISO dates and English column names",
+    "columns": {"PolicyNumber": "policy_id", "Email": "customer_email", "Product": "product", "StartDate": "start_date", "AnnualPremium": "premium_eur"},
+    "date_format": "YYYY-MM-DD",
+    "decimal_separator": "."
+  }
+}
