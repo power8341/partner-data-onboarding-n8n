@@ -1,0 +1,444 @@
+{
+  "id": "partnerOnboarding1",
+  "name": "Partner data onboarding",
+  "active": false,
+  "nodes": [
+    {
+      "id": "node-1",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "node-2",
+      "name": "Read partner A file",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        220,
+        200
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "/data/partner_a.csv",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-3",
+      "name": "Extract CSV A",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "operation": "csv",
+        "options": {
+          "delimiter": ";"
+        }
+      }
+    },
+    {
+      "id": "node-4",
+      "name": "Tag partner A",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "pA",
+              "name": "partner",
+              "value": "A",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "node-5",
+      "name": "Read partner B file",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        220,
+        400
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "/data/partner_b.csv",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-6",
+      "name": "Extract CSV B",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        400
+      ],
+      "parameters": {
+        "operation": "csv",
+        "options": {
+          "delimiter": ","
+        }
+      }
+    },
+    {
+      "id": "node-7",
+      "name": "Tag partner B",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        400
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "pB",
+              "name": "partner",
+              "value": "B",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "node-8",
+      "name": "Merge partners",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "node-9",
+      "name": "Map and validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Mapping and validation rules for partner policy files.\n// The same function is embedded in the n8n Code node (see scripts/build_workflow.js),\n// so the logic tested here is exactly what runs in n8n.\nconst MAPPINGS = {\n  A: { columns: { ref: 'policy_id', mail: 'customer_email', offer: 'product', start: 'start_date', price: 'premium_eur' }, dateFormat: 'DD/MM/YYYY', decimal: ',' },\n  B: { columns: { PolicyNumber: 'policy_id', Email: 'customer_email', Product: 'product', StartDate: 'start_date', AnnualPremium: 'premium_eur' }, dateFormat: 'YYYY-MM-DD', decimal: '.' },\n};\n\nfunction toIsoDate(value, format) {\n  const s = String(value || '').trim();\n  let y, m, d;\n  if (format === 'DD/MM/YYYY') {\n    const p = s.match(/^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/); if (!p) return null; [, d, m, y] = p;\n  } else {\n    const p = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/); if (!p) return null; [, y, m, d] = p;\n  }\n  const dt = new Date(Date.UTC(+y, +m - 1, +d));\n  // reject impossible dates like 31/02 that JavaScript would roll over\n  if (dt.getUTCFullYear() !== +y || dt.getUTCMonth() !== +m - 1 || dt.getUTCDate() !== +d) return null;\n  return `${y}-${m}-${d}`;\n}\n\nfunction transform(rows, runId) {\n  const valid = [], rejected = [], seen = new Set();\n  for (const row of rows) {\n    const { partner, ...raw } = row;\n    const map = MAPPINGS[partner];\n    const reject = (reason) => rejected.push({ run_id: runId, partner: partner || 'unknown', raw_row: JSON.stringify(raw), reason });\n    if (!map) { reject('unknown partner'); continue; }\n\n    const r = {};\n    for (const [src, target] of Object.entries(map.columns)) r[target] = raw[src] === undefined ? '' : String(raw[src]).trim();\n\n    if (!r.policy_id) { reject('missing policy id'); continue; }\n    if (!r.customer_email) { reject('missing email'); continue; }\n    if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(r.customer_email)) { reject('invalid email'); continue; }\n    const date = toIsoDate(r.start_date, map.dateFormat);\n    if (!date) { reject('invalid start date'); continue; }\n    const premium = Number(r.premium_eur.replace(map.decimal, '.'));\n    if (!Number.isFinite(premium) || premium <= 0) { reject('premium must be greater than 0'); continue; }\n    if (seen.has(r.policy_id)) { reject('duplicate policy id in file'); continue; }\n    seen.add(r.policy_id);\n\n    valid.push({ policy_id: r.policy_id, partner, customer_email: r.customer_email.toLowerCase(),\n                 product: r.product, start_date: date, premium_eur: Math.round(premium * 100) / 100 });\n  }\n  return { valid, rejected };\n}\n\n\n// ---- n8n entry point ----\nconst rows = $input.all().map(item => item.json);\nconst runId = new Date().toISOString();\nconst { valid, rejected } = transform(rows, runId);\nreturn [\n  ...valid.map(v => ({ json: { kind: 'valid', run_id: runId, ...v } })),\n  ...rejected.map(r => ({ json: { kind: 'rejected', ...r } })),\n];"
+      }
+    },
+    {
+      "id": "node-10",
+      "name": "Valid row?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "kind-valid",
+              "leftValue": "={{ $json.kind }}",
+              "rightValue": "valid",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-11",
+      "name": "Load policy (safe to rerun)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1560,
+        120
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO policies (policy_id, partner, customer_email, product, start_date, premium_eur) VALUES ($1, $2, $3, $4, $5::date, $6::numeric) ON CONFLICT (policy_id) DO UPDATE SET customer_email = EXCLUDED.customer_email, product = EXCLUDED.product, start_date = EXCLUDED.start_date, premium_eur = EXCLUDED.premium_eur, loaded_at = now();",
+        "options": {
+          "queryReplacement": "={{ [$json.policy_id, $json.partner, $json.customer_email, $json.product, $json.start_date, $json.premium_eur] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "pgBeloyLocal01",
+          "name": "Postgres beloy"
+        }
+      }
+    },
+    {
+      "id": "node-12",
+      "name": "Log rejected row",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1560,
+        320
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO rejected_rows (run_id, partner, raw_row, reason) VALUES ($1, $2, $3::jsonb, $4);",
+        "options": {
+          "queryReplacement": "={{ [$json.run_id, $json.partner, $json.raw_row, $json.reason] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "pgBeloyLocal01",
+          "name": "Postgres beloy"
+        }
+      }
+    },
+    {
+      "id": "node-13",
+      "name": "Build run summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        480
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all().map(i => i.json);\nconst valid = items.filter(i => i.kind === 'valid').length;\nconst rejected = items.filter(i => i.kind === 'rejected');\nconst reasons = {};\nfor (const r of rejected) reasons[r.partner + ': ' + r.reason] = (reasons[r.partner + ': ' + r.reason] || 0) + 1;\nconst lines = Object.entries(reasons).map(([k, n]) => '- ' + k + ' (' + n + ')');\nreturn [{ json: {\n  run_id: items.length ? items[0].run_id : new Date().toISOString(),\n  rows_read: items.length, rows_loaded: valid, rows_rejected: rejected.length,\n  message: 'Partner load finished: ' + valid + ' rows loaded, ' + rejected.length + ' rejected.' + (lines.length ? '\\n' + lines.join('\\n') : ''),\n} }];"
+      }
+    },
+    {
+      "id": "node-14",
+      "name": "Save run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1560,
+        480
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO load_runs (run_id, rows_read, rows_loaded, rows_rejected) VALUES ($1, $2, $3, $4);",
+        "options": {
+          "queryReplacement": "={{ [$json.run_id, $json.rows_read, $json.rows_loaded, $json.rows_rejected] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "pgBeloyLocal01",
+          "name": "Postgres beloy"
+        }
+      }
+    },
+    {
+      "id": "node-15",
+      "name": "Send alert to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        480
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/REPLACE/WITH/YOUR_WEBHOOK",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Build run summary').item.json.message }) }}",
+        "options": {}
+      },
+      "disabled": true,
+      "notes": "Enable and paste your Slack incoming webhook URL to get the run summary."
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Read partner A file",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Read partner B file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read partner A file": {
+      "main": [
+        [
+          {
+            "node": "Extract CSV A",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract CSV A": {
+      "main": [
+        [
+          {
+            "node": "Tag partner A",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag partner A": {
+      "main": [
+        [
+          {
+            "node": "Merge partners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read partner B file": {
+      "main": [
+        [
+          {
+            "node": "Extract CSV B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract CSV B": {
+      "main": [
+        [
+          {
+            "node": "Tag partner B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag partner B": {
+      "main": [
+        [
+          {
+            "node": "Merge partners",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge partners": {
+      "main": [
+        [
+          {
+            "node": "Map and validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map and validate": {
+      "main": [
+        [
+          {
+            "node": "Valid row?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build run summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid row?": {
+      "main": [
+        [
+          {
+            "node": "Load policy (safe to rerun)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log rejected row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build run summary": {
+      "main": [
+        [
+          {
+            "node": "Save run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save run": {
+      "main": [
+        [
+          {
+            "node": "Send alert to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
